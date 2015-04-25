@@ -195,8 +195,6 @@ filefield(char *file, int nf)
 		return -1;
 
 	n = tokenize(buf, f, nelem(f));
-	fprint(2, "tokens %d %s\n", n, f[0]);
-
 	if(n < nf)
 		return -1;
 
@@ -265,32 +263,11 @@ entropyproc(void *v)
 
 	for(;;){
 		n = e->entropy(buf, sizeof(buf));
-		fprint(2, "src %d pool %d data %d %.*H\n", e->src, pool, n, n, buf);
 		if(n > 0){
 			faddentropy(fortuna, e->src, pool, buf, n);
 			pool = (pool + 1) % FPOOLCOUNT;
 		}
 		sleep(e->sleepms);
-	}
-}
-
-void
-loadthread(void *)
-{
-	int pool;
-	union {
-		u32int i;
-		uchar b[4];
-	} u;
-
-	pool = 0;
-
-	for(;;){
-		u.i = filefield("#c/cputime", 0);
-		fprint(2, "loadthread: %.*H", sizeof(u.b), u.b);
-		faddentropy(fortuna, 2, pool, u.b, sizeof(u.b));
-		pool = (pool + 1) % FPOOLCOUNT;
-		sleep(60000);
 	}
 }
 
