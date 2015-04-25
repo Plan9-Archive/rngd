@@ -33,10 +33,11 @@ frandom(Fortuna *f, uchar *buf, int nbuf)
 	if(buf == nil || nbuf <= 0)
 		return;
 
-	qlock(f);
-	genrandom(buf, nbuf);
-
 	now = nsec();
+	// if time is standing still we will never reseed..
+	assert(now != f->lastseed);
+
+	qlock(f);
 
 	if(eplen(f->pools[0]) >= FPOOLMINSIZE && (now - f->lastseed) > 100000000LL){
 		f->lastseed = now;
