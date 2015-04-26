@@ -47,15 +47,12 @@ frandom(Fortuna *f, uchar *buf, int nbuf)
 		for(i = 0; i < nelem(f->pools); i++){
 			x = 1 << i;
 			if(f->nseed % x == 0){
-				fprint(2, "reseed pool %d\n", i);
 				npool++;
 				epsum(f->pools[i], bp);
 				memset(f->pools[i], 0, sizeof(EPool));
 				bp += SHA2_256dlen;
 			}
 		}
-
-		fprint(2, "reseed occuring %llud %d\n", f->nseed, npool);
 
 		greseed(f->g, f->newseed, npool*SHA2_256dlen);
 	}
