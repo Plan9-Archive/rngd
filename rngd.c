@@ -178,8 +178,104 @@ Srv fs = {
 	.stat=			fsstat,
 };
 
+static int
+filefield(char *file, int nf)
+{
+	char *f[10], buf[512];
+	int fd, n;
+
+	fd = open(file, OREAD);
+	if(fd < 0)
+		return -1;
+
+	n = read(fd, buf, sizeof(buf));
+	close(fd);
+
+	if(n <= 0)
+		return -1;
+
+	n = tokenize(buf, f, nelem(f));
+	fprint(2, "tokens %d %s\n", n, f[0]);
+
+	if(n < nf)
+		return -1;
+
+	return atoi(f[nf]);
+}
+
+int
+truerandom(uchar *buf, int nbuf)
+{
+	int fd, n;
+	fd = open("/dev/random", OREAD);
+	if(fd <= 0)
+		return -1;
+
+	nbuf = nbuf >= 4 ? 4 : nbuf;
+
+	n = read(fd, buf, nbuf);
+	close(fd);
+	return n;
+}
+
+int
+contextswitches(uchar *buf, int nbuf)
+{
+	int n;
+	union {
+		u32int i;
+		uchar b[4];
+	} u;
+
+	assert(buf != nil);
+	assert(nbuf > 0);
+
+	u.i = filefield("#c/sysstat", 1);
+
+	if(nbuf >= 4)
+		n = 4;
+	else
+		n = nbuf;
+
+	memcpy(buf, u.b, n);
+	return n;
+};
+
+typedef struct eproc eproc;
+struct eproc {
+	int src;
+	int sleepms;
+	int (*entropy)(uchar *buf, int nbuf);
+};
+
+eproc sources[] = {
+{1,	1000,	truerandom},
+{2,	30000,	contextswitches},
+};
+
 void
-rndthread(void *)
+entropyproc(void *v)
+{
+	int pool, n;
+	uchar buf[32];
+	eproc *e;
+
+	pool = 0;
+	e = v;
+
+	for(;;){
+		n = e->entropy(buf, sizeof(buf));
+		fprint(2, "src %d pool %d data %d %.*H\n", e->src, pool, n, n, buf);
+		if(n > 0){
+			faddentropy(fortuna, e->src, pool, buf, n);
+			pool = (pool + 1) % FPOOLCOUNT;
+		}
+		sleep(e->sleepms);
+	}
+}
+
+void
+loadthread(void *)
 {
 	int pool;
 	union {
@@ -190,11 +286,33 @@ rndthread(void *)
 	pool = 0;
 
 	for(;;){
-		u.i = truerand();
-		fprint(2, "rndthread: %.*H\n", sizeof(u.b), u.b);
-		faddentropy(fortuna, 0, pool, u.b, sizeof(u.b));
-		sleep(250);
+		u.i = filefield("#c/cputime", 0);
+		fprint(2, "loadthread: %.*H", sizeof(u.b), u.b);
+		faddentropy(fortuna, 2, pool, u.b, sizeof(u.b));
+		pool = (pool + 1) % FPOOLCOUNT;
+		sleep(60000);
 	}
+}
+
+void
+procs(void)
+{
+	int i;
+
+	for(i = 0; i < nelem(sources); i++){
+		proccreate(entropyproc, &sources[i], 8192);
+	}
+}
+
+void
+seed(void)
+{
+	uchar buf[32];
+
+	genrandom(buf, sizeof(buf));
+	faddentropy(fortuna, 0, 0, buf, sizeof(buf));
+	genrandom(buf, sizeof(buf));
+	faddentropy(fortuna, 0, 0, buf, sizeof(buf));
 }
 
 void
@@ -203,6 +321,9 @@ threadmain(int, char**)
 	fmtinstall('H', encodefmt);
 
 	fortuna = newfortuna();
-	proccreate(rndthread, nil, 8192);
+
+	seed();
+	procs();
+
 	threadpostmountsrv(&fs, "random", "/dev", MBEFORE);
 }
