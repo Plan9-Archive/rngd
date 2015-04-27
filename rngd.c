@@ -9,6 +9,10 @@
 
 #include "fortuna.h"
 
+static int debug = 0;
+static long exiting = 0;
+static long nproc = 0;
+static Channel *writes;
 static Fortuna *fortuna;
 
 enum 
@@ -18,7 +22,183 @@ enum
 	Nqid,
 };
 
-int
+static int
+filefield(char *file, int nf)
+{
+	char *f[10], buf[512];
+	int fd, n;
+
+	fd = open(file, OREAD);
+	if(fd < 0)
+		return -1;
+
+	n = read(fd, buf, sizeof(buf));
+	close(fd);
+
+	if(n <= 0)
+		return -1;
+
+	n = tokenize(buf, f, nelem(f));
+	if(n < nf)
+		return -1;
+
+	return atoi(f[nf]);
+}
+
+// 
+static int
+truerandom(uchar *buf, int nbuf)
+{
+	int fd, n;
+	fd = open("#c/random", OREAD);
+	if(fd <= 0)
+		return -1;
+
+	nbuf = nbuf >= 32 ? 32 : nbuf;
+
+	n = read(fd, buf, nbuf);
+	close(fd);
+	return n;
+}
+
+// context switches
+static int
+contextswitches(uchar *buf, int nbuf)
+{
+	union {
+		u32int i;
+		uchar b[4];
+	} u;
+
+	assert(buf != nil);
+	assert(nbuf > 0);
+
+	u.i = filefield("#c/sysstat", 1);
+
+	nbuf  = nbuf >= 4 ? 4 : nbuf;
+	memcpy(buf, u.b, nbuf);
+	return nbuf;
+};
+
+// sha hash nanosecond timestamp
+static int
+nanoseconds(uchar *buf, int nbuf)
+{
+	int fd, n;
+	char ts[128], *f[4];
+	uchar sha[SHA2_256dlen];
+	union {
+		uvlong u;
+		uchar b[sizeof(uvlong)];
+	} u;
+
+	fd = open("#c/time", OREAD);
+	if(fd < 0)
+		return -1;
+
+	n = read(fd, ts, sizeof(ts));
+	close(fd);
+	if(n <= 0)
+		return -1;
+
+	if(tokenize(ts, f, nelem(f)) != nelem(f))
+		return -1;
+
+	u.u = strtoull(f[2], nil, 0);
+	sha2_256(u.b, sizeof(u.b), sha, nil);
+	nbuf = nbuf >= SHA2_256dlen ? SHA2_256dlen : nbuf;
+	memcpy(buf, sha, nbuf);
+	return nbuf;
+}
+
+// handler for writes to 'random' file
+static int
+writedata(uchar *buf, int nbuf)
+{
+	DigestState *ds;
+	uchar sha[SHA2_256dlen];
+
+	while(recv(writes, &ds) < 0)
+		yield();
+
+	sha2_256(nil, 0, sha, ds);
+
+	nbuf = nbuf >= SHA2_256dlen ? SHA2_256dlen : nbuf;
+	memcpy(buf, sha, nbuf);
+	return nbuf;
+}
+
+typedef struct eproc eproc;
+struct eproc {
+	int src;
+	int sleepms;
+	int isproc;
+	char *name;
+	int (*entropy)(uchar *buf, int nbuf);
+};
+
+static eproc sources[] = {
+{1,	5003,	1, "/dev/random", truerandom},
+{2,	3001,	1, "#c/sysstat", contextswitches},
+{3, 1009,	1, "#c/time", nanoseconds},
+{4, 0,		0, "/srv/random", writedata},
+};
+
+static void
+entropyproc(void *v)
+{
+	int pool, n;
+	uchar buf[32];
+	eproc *e;
+
+	pool = 0;
+	e = v;
+
+	threadsetname("%s", e->name);
+
+	for(;!exiting;){
+		n = e->entropy(buf, sizeof(buf));
+		if(n > 0){
+			if(debug) fprint(2, "src %d %s pool %d -> %d %.*H\n", e->src, e->name, pool, n, n, buf);
+			faddentropy(fortuna, e->src, pool, buf, n);
+			pool = (pool + 1) % FPOOLCOUNT;
+		}
+		sleep(e->sleepms);
+	}
+
+	adec(&nproc);
+}
+
+static void
+procs(void)
+{
+	int i;
+
+	for(i = 0; i < nelem(sources); i++){
+		ainc(&nproc);
+		if(sources[i].isproc)
+			proccreate(entropyproc, &sources[i], 8192);
+		else
+			threadcreate(entropyproc, &sources[i], 8192);
+	}
+}
+
+static void
+seed(void)
+{
+	int n;
+	uchar buf[32];
+
+	n = truerandom(buf, sizeof(buf));
+	assert(n == 32);
+	faddentropy(fortuna, 0, 0, buf, sizeof(buf));
+	n = nanoseconds(buf, sizeof(buf));
+	assert(n == 32);
+	faddentropy(fortuna, 0, 0, buf, sizeof(buf));
+}
+
+
+static int
 fillstat(ulong qid, Dir *d)
 {
 	memset(d, 0, sizeof(Dir));
@@ -43,7 +223,7 @@ fillstat(ulong qid, Dir *d)
 	return 1;
 }
 
-int
+static int
 readtopdir(Fid*, uchar *buf, long off, int cnt, int blen)
 {
 	int i, m, n;
@@ -163,144 +343,75 @@ fswrite(Req *r)
 {
 	switch((ulong)r->fid->qid.path) {
 	case Qrandom:
-		respond(r, "not implemented");
+		sendp(writes, sha2_256((uchar*)r->ifcall.data, r->ifcall.count, nil, nil));
+		r->ofcall.count = r->ifcall.count;
+		respond(r, nil);
 		return;
 	}
 	respond(r, "fixme");
 }
 
-Srv fs = {
+
+
+static void
+fsstart(Srv *)
+{
+	writes = chancreate(sizeof(DigestState*), 10);
+	if(writes == nil)
+		sysfatal("chancreate: %r");
+	fortuna = newfortuna();
+	if(fortuna == nil)
+		sysfatal("newfortuna: %r");
+
+	seed();
+	procs();
+}
+
+static void
+fsend(Srv *)
+{
+	ainc(&exiting);
+	while(nproc != 0){
+		yield();
+		sleep(0);
+	}
+
+	fclose(fortuna);
+}
+
+static Srv fs = {
 	.attach=		fsattach,
 	.walk1=			fswalk1,
 	.open=			fsopen,
 	.read=			fsread,
 	.write=			fswrite,
 	.stat=			fsstat,
-};
-
-static int
-filefield(char *file, int nf)
-{
-	char *f[10], buf[512];
-	int fd, n;
-
-	fd = open(file, OREAD);
-	if(fd < 0)
-		return -1;
-
-	n = read(fd, buf, sizeof(buf));
-	close(fd);
-
-	if(n <= 0)
-		return -1;
-
-	n = tokenize(buf, f, nelem(f));
-	if(n < nf)
-		return -1;
-
-	return atoi(f[nf]);
-}
-
-int
-truerandom(uchar *buf, int nbuf)
-{
-	int fd, n;
-	fd = open("/dev/random", OREAD);
-	if(fd <= 0)
-		return -1;
-
-	nbuf = nbuf >= 4 ? 4 : nbuf;
-
-	n = read(fd, buf, nbuf);
-	close(fd);
-	return n;
-}
-
-int
-contextswitches(uchar *buf, int nbuf)
-{
-	int n;
-	union {
-		u32int i;
-		uchar b[4];
-	} u;
-
-	assert(buf != nil);
-	assert(nbuf > 0);
-
-	u.i = filefield("#c/sysstat", 1);
-
-	if(nbuf >= 4)
-		n = 4;
-	else
-		n = nbuf;
-
-	memcpy(buf, u.b, n);
-	return n;
-};
-
-typedef struct eproc eproc;
-struct eproc {
-	int src;
-	int sleepms;
-	int (*entropy)(uchar *buf, int nbuf);
-};
-
-eproc sources[] = {
-{1,	1000,	truerandom},
-{2,	30000,	contextswitches},
+	.start=			fsstart,
+	.end=			fsend,
 };
 
 void
-entropyproc(void *v)
+usage(void)
 {
-	int pool, n;
-	uchar buf[32];
-	eproc *e;
-
-	pool = 0;
-	e = v;
-
-	for(;;){
-		n = e->entropy(buf, sizeof(buf));
-		if(n > 0){
-			faddentropy(fortuna, e->src, pool, buf, n);
-			pool = (pool + 1) % FPOOLCOUNT;
-		}
-		sleep(e->sleepms);
-	}
+	fprint(2, "usage: %s [-D]\n", argv0);
+	threadexitsall("usage");
 }
 
 void
-procs(void)
-{
-	int i;
-
-	for(i = 0; i < nelem(sources); i++){
-		proccreate(entropyproc, &sources[i], 8192);
-	}
-}
-
-void
-seed(void)
-{
-	uchar buf[32];
-
-	genrandom(buf, sizeof(buf));
-	faddentropy(fortuna, 0, 0, buf, sizeof(buf));
-	genrandom(buf, sizeof(buf));
-	faddentropy(fortuna, 0, 0, buf, sizeof(buf));
-}
-
-void
-threadmain(int, char**)
+threadmain(int argc, char **argv)
 {
 	fmtinstall('H', encodefmt);
 
-	fortuna = newfortuna();
-
-	seed();
-	procs();
+	ARGBEGIN{
+	case 'D':
+		if(debug > 0)
+			chatty9p++;
+		debug++;
+		break;
+	default:
+		usage();
+	}ARGEND;
 
 	threadpostmountsrv(&fs, "random", "/dev", MBEFORE);
+	threadexits(nil);
 }
