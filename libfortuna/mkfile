@@ -1,0 +1,8 @@
+</$objtype/mkfile
+
+LIB=libfortuna.$O.a
+OFILES=fortuna.$O
+HFILES=fortuna.h
+
+</sys/src/cmd/mklib
+

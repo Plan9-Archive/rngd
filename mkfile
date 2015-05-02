@@ -1,18 +1,27 @@
 </$objtype/mkfile
 
 TARG=rngd
-
-OFILES=\
-	rngd.$O\
-	fortuna.$O
+LIB=libfortuna/libfortuna.$O.a
+OFILES=rngd.$O
+HFILES=libfortuna/fortuna.h
 
 BIN=/$objtype/bin
 
 </sys/src/cmd/mkmany
 
-$O.rngd:	rngd.$O fortuna.$O
-	$LD -o $target $prereq
+CFLAGS=-Ilibfortuna
 
-$O.test:	test.$O fortuna.$O
-	$LD -o $target $prereq
+$LIB:V:
+	cd libfortuna
+	mk
+
+$O.rngd:	rngd.$O $LIB
+	$LD $LDFLAGS -o $target $prereq
+
+$O.test:	test.$O $LIB
+	$LD $LDFLAGS -o $target $prereq
+
+clean nuke:V:
+	@{ cd libfortuna; mk $target }
+	rm -f *.[$OS] [$OS].* $TARG
 
