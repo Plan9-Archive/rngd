@@ -121,7 +121,7 @@ gblocks(Generator *g, int nblocks, uchar *buf, int nbuf)
 {
 	int i;
 	AESstate s;
-	uchar ctr[AESbsize], *bp;
+	uchar *bp;
 
 	// C > 0
 	assert(mpcmp(g->counter, mpzero) == 1);
@@ -133,9 +133,8 @@ gblocks(Generator *g, int nblocks, uchar *buf, int nbuf)
 	bp = buf;
 	for(i = 0; i < nblocks; i++){
 		// r ← r || E(K, C)
-		mptole(g->counter, ctr, AESbsize, nil);
-		aesCBCencrypt(ctr, AESbsize, &s);
-		memcpy(bp, ctr, AESbsize);
+		mptole(g->counter, s.ivec, AESbsize, nil);
+		aes_encrypt(s.ekey, s.rounds, s.ivec, bp);
 		bp += AESbsize;
 
 		// C = C + 1
