@@ -6,12 +6,16 @@
 #include "fortuna.h"
 
 Fortuna*
-newfortuna(void)
+newfortuna(vlong (*ns)(void))
 {
 	Fortuna *f;
 	int i;
 
 	f = mallocz(sizeof(Fortuna), 1);
+
+	assert(f != nil);
+
+	f->ns = ns;
 
 	for(i = 0; i < nelem(f->pools); i++)
 		f->pools[i] = newepool();
@@ -33,7 +37,7 @@ frandom(Fortuna *f, uchar *buf, int nbuf)
 	if(buf == nil || nbuf <= 0)
 		return;
 
-	now = nsec();
+	now = f->ns();
 	// if time is standing still we will never reseed..
 	assert(now != f->lastseed);
 
@@ -202,3 +206,4 @@ epsum(EPool *p, uchar *buf)
 {
 	sha2_256(nil, 0, buf, p);
 }
+

@@ -138,10 +138,10 @@ struct eproc {
 };
 
 static eproc sources[] = {
-{1,	5003,	1, "/dev/random", truerandom},
-{2,	3001,	1, "#c/sysstat", contextswitches},
-{3, 1009,	1, "#c/time", nanoseconds},
-{4, 0,		0, "/srv/random", writedata},
+	{1,	5003,	1, "/dev/random",	truerandom},
+	{2,	3001,	1, "#c/sysstat",	contextswitches},
+	{3,	1009,	1, "#c/time",		nanoseconds},
+	{4,	0,	0, "/srv/random",	writedata},
 };
 
 static void
@@ -359,7 +359,7 @@ fsstart(Srv *)
 	writes = chancreate(sizeof(DigestState*), 10);
 	if(writes == nil)
 		sysfatal("chancreate: %r");
-	fortuna = newfortuna();
+	fortuna = newfortuna(nsec);
 	if(fortuna == nil)
 		sysfatal("newfortuna: %r");
 
@@ -415,3 +415,4 @@ threadmain(int argc, char **argv)
 	threadpostmountsrv(&fs, "random", "/dev", MBEFORE);
 	threadexits(nil);
 }
+
