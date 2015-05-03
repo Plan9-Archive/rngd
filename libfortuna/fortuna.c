@@ -5,6 +5,8 @@
 
 #include "fortuna.h"
 
+static uchar ctrzero[AESbsize] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
 Fortuna*
 newfortuna(vlong (*ns)(void))
 {
@@ -137,7 +139,7 @@ gblocks(Generator *g, int nblocks, uchar *buf, int nbuf)
 	uchar *bp;
 
 	// C > 0
-	assert(g->ctr[AESbsize-1] != 0);
+	assert(memcmp(g->ctr, ctrzero, AESbsize) != 0);
 
 	assert(nblocks*AESbsize <= nbuf);
 
