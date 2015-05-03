@@ -26,7 +26,7 @@ void fclose(Fortuna *f);
 
 struct Generator {
 	uchar key[SHA2_256dlen];
-	mpint *counter;
+	uchar ctr[AESbsize];
 };
 
 Generator *newgenerator(void);

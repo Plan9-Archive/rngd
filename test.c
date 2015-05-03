@@ -21,17 +21,16 @@ void
 main(int, char**)
 {
 	fmtinstall('H', encodefmt);
-	fmtinstall('B', mpfmt);
 
-	f = newfortuna();
+	f = newfortuna(nsec);
 
 	print("key %.*H\n", sizeof(f->g->key), f->g->key);
-	print("counter %.10B\n", f->g->counter);
+	print("counter %.*H\n", sizeof(f->g->ctr), f->g->ctr);
 
 	greseed(f->g, (uchar*)"hello world", 11);
 
 	print("key %.*H\n", sizeof(f->g->key), f->g->key);
-	print("counter %.10B\n", f->g->counter);
+	print("counter %.*H\n", sizeof(f->g->ctr), f->g->ctr);
 
 	testgenerator();
 

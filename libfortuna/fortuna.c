@@ -98,11 +98,20 @@ newgenerator(void)
 	Generator *g;
 
 	g = mallocz(sizeof(Generator), 1);
-	g->counter = mpnew(128);
-
-	mpassign(mpzero, g->counter);
 
 	return g;
+}
+
+static void
+ginc(Generator *g)
+{
+	int i;
+
+	for(i = nelem(g->ctr) - 1; i >= 0; --i){
+		g->ctr[i]++;
+		if(g->ctr[i] != 0)
+			break;
+	}
 }
 
 void
@@ -117,7 +126,7 @@ greseed(Generator *g, uchar *seed, int nseed)
 	ds = sha2_256(g->key, sizeof(g->key), nil, nil);
 	sha2_256(seed, nseed, g->key, ds);
 
-	mpadd(g->counter, mpone, g->counter);
+	ginc(g);
 }
 
 static void
@@ -128,7 +137,7 @@ gblocks(Generator *g, int nblocks, uchar *buf, int nbuf)
 	uchar *bp;
 
 	// C > 0
-	assert(mpcmp(g->counter, mpzero) == 1);
+	assert(g->ctr[AESbsize-1] != 0);
 
 	assert(nblocks*AESbsize <= nbuf);
 
@@ -137,12 +146,11 @@ gblocks(Generator *g, int nblocks, uchar *buf, int nbuf)
 	bp = buf;
 	for(i = 0; i < nblocks; i++){
 		// r ← r || E(K, C)
-		mptole(g->counter, s.ivec, AESbsize, nil);
-		aes_encrypt(s.ekey, s.rounds, s.ivec, bp);
+		aes_encrypt(s.ekey, s.rounds, g->ctr, bp);
 		bp += AESbsize;
 
 		// C = C + 1
-		mpadd(g->counter, mpone, g->counter);
+		ginc(g);
 	}
 }
 
@@ -177,7 +185,6 @@ grandom(Generator *g, uchar *buf, int n)
 void
 gclose(Generator *g)
 {
-	mpfree(g->counter);
 	memset(g, 0, sizeof(Generator));
 	free(g);
 }
